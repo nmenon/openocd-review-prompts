@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(done)",
+      "Bash(ls:*)",
+      "Bash(git am*)",
+      "Bash(git fetch*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git stash*)",
+      "Bash(git checkout*)",
+      "Bash(./bootstrap*)",
+      "Bash(./configure*)",
+      "Bash(make*)",
+      "Bash(tools/checkpatch.sh*)",
+      "mcp__openocd-gerrit-review__fetch_gerrit_change",
+      "mcp__openocd-gerrit-review__fetch_patchset_diff",
+      "mcp__openocd-gerrit-review__submit_gerrit_review",
+      "Bash(for id:*)",
+      "Bash(do f=/tmp/claude-1000/-home-nmenon-Src-opensource-AI-TOOLS-openocd-review-prompts/6749fcae-50a7-4eb0-8998-6d41d9a7481f/tasks/$id.output echo '=== $id ===' strings $f)"
+    ]
+  }
+}
