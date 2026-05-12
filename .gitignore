@@ -1,0 +1,9 @@
+# Claude settings - explicitly add if required
+.claude/settings.local.json
+
+# Session and debug logs — not part of the review framework
+logs/*.log
+logs/*.log.*
+
+# Review session output files (generated per-run, not tracked)
+review-metadata.json

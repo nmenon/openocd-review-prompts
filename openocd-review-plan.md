@@ -38,6 +38,38 @@ Subject line must follow `<area>: <description>`.
 **Good**: `flash/nor/stm32f1x: add STM32G0 support`
 **Bad**: `STM32 Flash: Added support for new device.`
 
+### CM-1a [ERROR] Subject must be a single line — and must follow `subsystem: description`
+The commit message subject must be a single line in the form `subsystem: description`.
+Informal titles like "Initial cut at support for X" are rejected.
+
+```
+# WRONG:
+Initial cut at support for LPC55S16.
+
+# CORRECT:
+tcl/target: add support for LPC55S16
+```
+
+*Source: Change 6800 — Antonio Borneo: "Please change the first line with something like: tcl/target: add support for LPC55S16"*
+
+### CM-1b [ERROR] Subject must be a single line
+The commit message subject must be exactly one line. A two-line subject
+(e.g., a title followed immediately by a subtitle without a blank line)
+is wrong. Move the second line into the body, separated by a blank line.
+
+```
+# WRONG:
+tcl/board: Add support for Terasic DE1-SoC
+A complete BSP for the DE1-SoC board
+
+# CORRECT:
+tcl/board: Add support for Terasic DE1-SoC
+
+A complete BSP for the DE1-SoC board including...
+```
+
+*Source: Change 8175 — Antonio Borneo*
+
 ### CM-2 [ERROR] Signed-off-by missing
 Every patch must have `Signed-off-by: Name <email>` trailer.
 
@@ -92,12 +124,15 @@ Files must use LF (Unix) line endings, not CRLF.
 No trailing blank lines at end of file.
 
 ### WS-6 [ERROR] SPDX on new files
-New source files require:
-```c
-// SPDX-License-Identifier: GPL-2.0-or-later
-```
-as the first line. (Note: OpenOCD uses `//` for SPDX — this is an explicit
-checkpatch exception in `.checkpatch.conf`.)
+New source files require an SPDX identifier as the first line:
+
+- C/C++ files: `// SPDX-License-Identifier: GPL-2.0-or-later`
+- Tcl/cfg files: `# SPDX-License-Identifier: GPL-2.0-or-later`
+
+Note: `//` for SPDX in C files is an explicit checkpatch exception in `.checkpatch.conf`.
+Tcl configs are also required to carry the SPDX header — this is enforced on new `.cfg` files.
+
+*Source: Change 6800 — Antonio Borneo: "Please add as first line: # SPDX-License-Identifier: GPL-2.0-or-later"*
 
 ### WS-7 [WARNING] Copyright statement format
 Non-trivial contributions should add:
@@ -537,6 +572,29 @@ Include `transport select swd` or `transport select jtag` (or handle both
 with `transport select`). Target configs that assume a single transport
 without checking will fail silently on boards with the other transport.
 
+### TCL-2a [ERROR] Use `swj_newdap` not manual transport conditionals
+When a target supports both JTAG and SWD, use `swj_newdap` (from
+`target/swj-dp.tcl`) rather than a manual conditional:
+
+```tcl
+# WRONG — Borneo -1'd this pattern:
+if {[using_jtag]} {
+    jtag newtap $_CHIPNAME cpu -irlen 4 -expected-id $_TAPID
+} else {
+    swd newdap $_CHIPNAME cpu -expected-id $_TAPID
+}
+
+# CORRECT:
+source [find target/swj-dp.tcl]
+swj_newdap $_CHIPNAME cpu -irlen 4 -expected-id $_TAPID
+```
+
+`swj_newdap` encapsulates the transport selection correctly and supports
+all transports including SWD multi-drop. The `source [find target/swj-dp.tcl]`
+must accompany it.
+
+*Source: Change 7090 — Antonio Borneo, Code-Review-1 on PS2, +2 after fix*
+
 ### TCL-3 [WARNING] Use `source [find ...]` not bare `source`
 Use `source [find target/swj-dp.tcl]` not `source target/swj-dp.tcl`.
 The `find` command searches the script search paths correctly.
@@ -562,12 +620,112 @@ the command fail naturally.
 Board configs (in `tcl/board/`) should source target configs with overrides
 for chip-specific variables, not copy/modify target configs.
 
+### TCL-10 [ERROR] No dead code in Tcl scripts
+Remove all of the following from `.cfg` files:
+- Unused local variables (set but never read)
+- Procs that are defined but never called
+- `arp_examine` calls on targets NOT created with `-defer-examine`
+  (examination already happens automatically during init)
+- `dbginit` calls where examination already ran it
+- `target smp` / SMP proc calls when `target smp` was never set up
+- Stale comments that no longer describe the current code
+
+*Source: Change 8175 — Antonio Borneo (6 separate inline comments)*
+
+### TCL-11 [WARNING] Do not repeat OpenOCD defaults
+Do not include settings that are already OpenOCD's default:
+```tcl
+# These are defaults — do NOT include unless you need to change them:
+gdb_memory_map enable       # already default
+gdb_flash_program enable    # already default
+```
+Only include settings that differ from the default, and comment why.
+
+*Source: Change 8175 — Antonio Borneo: "OpenOCD default is already ... so these two could be dropped"*
+
+### TCL-12 [WARNING] Comment justification for non-default settings
+When enabling a non-default setting in a board or target config,
+add a comment explaining why it is needed:
+```tcl
+# Required for NAND: default map doesn't expose NOR bank at 0x08000000
+gdb_memory_map disable
+```
+Without a comment, reviewers will ask "why do you need to enable this?"
+
+*Source: Change 8175 — Antonio Borneo: "For my curiosity, why you need to enable them? What issue you get?"*
+
+### TCL-13 [WARNING] `arp_examine` only for `-defer-examine` targets
+Only call `arp_examine` on targets that were created with `-defer-examine`.
+Targets without `-defer-examine` are examined automatically during init;
+calling `arp_examine` again is redundant and confusing.
+
+```tcl
+# WRONG — target was not created with -defer-examine:
+target create $_TARGETNAME aarch64 -dap $_DAP -dbgbase 0x90410000
+...
+$_TARGETNAME arp_examine   # redundant, examination already happened
+
+# CORRECT — only use when defer-examine was set:
+target create $_TARGETNAME aarch64 -dap $_DAP -dbgbase 0x90410000 -defer-examine
+...
+$_TARGETNAME arp_examine   # OK
+```
+
+*Source: Change 8175 — Antonio Borneo: "arp_examine has sense for targets created with -defer-examine, which is not the case here"*
+
 ### TCL-9 [INFO] Proc namespace in target configs
 Procs defined in target configs should be prefixed with the target name
 to avoid name collisions:
 ```tcl
 proc rp2040_something { } { ... }
 ```
+
+### TCL-14 [ERROR] Adapter speed must be a realistic kHz value
+`adapter speed` takes a value in kHz. Do not use `0xffffffff` or other
+extreme values. Typical values: `1000` (1 MHz), `4000` (4 MHz).
+`adapter speed 4294967295` is ~4 THz and will be flagged immediately.
+
+*Source: Change 6800 — Antonio Borneo: "the value is in kHz. Any special reason for this strange value ~4THz (0xffffffff)? usually we have more humble values like 1000 or 4000"*
+
+### TCL-15 [ERROR] Remove commented-out code before submission
+Do not submit new `.cfg` files containing commented-out code blocks without
+an explanation. Antonio Borneo asks "why this line commented out? What the
+reason to keep it?" for every such instance. Remove all dead/commented-out
+code before submitting.
+
+*Source: Change 6800 — Antonio Borneo (×3 separate comments on commented-out blocks)*
+
+### TCL-16 [ERROR] Custom gdb-attach event must preserve `halt 1000`
+The default `gdb-attach` event executes `halt 1000` because GDB requires
+the target to be halted on attach. When overriding with a custom handler,
+the `halt 1000` call must be kept:
+
+```tcl
+# WRONG — breaks GDB attach:
+$_TARGETNAME configure -event gdb-attach { my_custom_setup }
+
+# CORRECT:
+$_TARGETNAME configure -event gdb-attach {
+    my_custom_setup
+    halt 1000
+}
+```
+
+*Source: Change 6615 — Antonio Borneo: "By using a custom gdb-attach you drop the default. Now GDB will complain that cannot attach to the target."*
+
+### TCL-17 [WARNING] Consider non-GDB (telnet) users when changing target access
+OpenOCD is used from both GDB and the telnet/scripting interface. Target
+event handlers and access procs must remain usable from telnet, not only
+from GDB sessions.
+
+*Source: Change 6615 — Antonio Borneo: "what about ignoring GDB and using OpenOCD from telnet interface? With this change we loose the possibility to access the core."*
+
+### TCL-18 [ERROR] Consistent processor naming throughout a config file
+Use one consistent processor name. Do not mix `M4` and `M33` for the same
+core in the same file. If the variable is `M33_JTAG_TAPID`, the target
+type must also be the M33 variant.
+
+*Source: Change 6800 — Antonio Borneo: "M4 or M33? Few lines above you used M33_JTAG_TAPID!"*
 
 ---
 
@@ -654,6 +812,40 @@ Run with Valgrind or ASAN to verify no leaks.
 ### HP-5 [INFO] Configuration callbacks
 When adding a new configuration item, register it through the configuration
 framework (`register_commands()`) rather than using global variables directly.
+
+### HP-6 [WARNING] Use configure.ac for platform-specific headers
+When guarding platform-specific includes, use `AC_CHECK_HEADERS([header.h])`
+in `configure.ac` and the generated `HAVE_HEADER_H` macro, not repeated
+inline platform/version guards. Repeating the same platform check in
+multiple source files makes the code unreadable.
+
+```c
+/* WRONG — repeating IS_DARWIN version checks everywhere: */
+#if IS_DARWIN && __MAC_OS_X_VERSION_MAX_ALLOWED >= 101500
+#include <libproc.h>
+#endif
+
+/* CORRECT — configure.ac: AC_CHECK_HEADERS([libproc.h])
+   Then in source: */
+#if IS_DARWIN
+#ifdef HAVE_LIBPROC_H
+#include <libproc.h>
+#endif
+#endif
+```
+
+*Source: Change 8130 — Antonio Borneo*
+
+### HP-7 [WARNING] Do not add per-message target state without verbosity control
+Do not add the target's running/halted state to every log message.
+All three primary maintainers (Vanek, Schink, Borneo) have independently
+objected to this pattern (Change 8127). It is too verbose by default and
+produces misleading `<unknown>` labels during examination.
+
+If per-area verbosity is needed, propose a configurable debug-level system
+rather than unconditional additions to all log lines.
+
+*Source: Change 8127 — Tomas Vanek, Marc Schink, Antonio Borneo (unanimous)*
 
 ---
 
@@ -770,6 +962,37 @@ matching the pattern of FreeRTOS, ChibiOS, NuttX, etc.
 
 *Source: Change 7250 — Reviewer required separate stacking file for consistency.*
 
+### ARCH-5 [INFO] Interim fix + FIXME comment is acceptable
+When a proper fix requires large-scale refactoring (renaming, inlining,
+touching many targets), a minimal interim fix (e.g., zero-initialisation
+of an uninitialized field) with a `/* FIXME: proper fix is ... */` comment
+is acceptable as a stepping-stone patch. Both Vanek and Borneo endorsed
+this approach in 8181 rather than blocking on perfection.
+
+*Source: Change 8181 — Tomas Vanek + Antonio Borneo*
+
+### ARCH-7 [WARNING] Use a reasonable fixed work area size — do not use max SRAM
+When specifying `-work-area-size` for a target, use a sensible fixed size
+(e.g., `0x8000` = 32 KB) rather than attempting to use the entire available
+SRAM. SRAM sections may not be contiguous or guaranteed available; 32 KB
+is more than sufficient for all flash programming algorithms.
+
+*Source: Change 6800 — Karl Palsson: "Just set this to something like 32k, that's more than enough for working space for flash algorithms"*
+
+### ARCH-8 [INFO] Fix broken Tcl syntax rather than working around it
+Do not add OpenOCD code to accept or normalise incorrect Tcl syntax.
+jimtcl has its own constraints; patches should fix the scripts to use
+correct syntax rather than making OpenOCD tolerate bad syntax.
+
+*Source: Change 6560 — Antonio Borneo abandoned own patch: "Let's try to be compliant to TCL as possible, otherwise we could have other problems at next jimtcl version"*
+
+### ARCH-6 [INFO] Any maintainer may override a prior Code-Review+2
+A +2 from one maintainer does not close the review. Any other maintainer
+may give -1 after a +2 if they identify real issues. This is normal
+OpenOCD practice, not a conflict. Do not argue "but X already approved it."
+
+*Source: Change 8232 — Antonio Borneo gave -1 after Tomas Vanek's +2, then +2 after fixes*
+
 ---
 
 ## NM/CS Clarifications from Real Reviews
@@ -785,13 +1008,86 @@ The coding style guide says: declare variables at first use, not at function top
   at first use per the strict rule
 - When in doubt, apply the stricter "declare at first use" rule
 
-### CMD-7 [WARNING] Declarations after CMD_ARGC check
+### CMD-7 [ERROR] CMD_ARGC check must use exact conditions
+Use `!= N` or `!= 3 && != 4` (when a range is valid) — not `< N` or `> N`
+when the valid range is precisely known. Antonio Borneo consistently
+replaces loose checks with exact ones:
+
+```c
+/* WRONG — too loose: */
+if (CMD_ARGC > 4) return ERROR_COMMAND_SYNTAX_ERROR;
+
+/* CORRECT — exact: */
+if (CMD_ARGC != 3 && CMD_ARGC != 4) return ERROR_COMMAND_SYNTAX_ERROR;
+```
+Check lines after CMD_ARGC to determine all valid counts before writing the check.
+
+*Source: Change 8000 — Antonio Borneo (3 consecutive inline comments on same file)*
+
+### CMD-8 [ERROR] Declarations after CMD_ARGC check
 
 Variable declarations for command argument parsing should come **after** the
 `CMD_ARGC` bounds check, not before it. This ensures invalid argument count
 is caught before any setup work is done.
 
 *Source: Change 8060 — Marc Schink: "Move this **after** the CMD_ARGC check."*
+
+### TY-10 [WARNING] `__attribute__((unused))` for deliberately kept unused parameters
+When a refactor or patch leaves a function parameter unused but the parameter
+must be kept for API/signature consistency (e.g., all GDB packet handlers
+share the same signature), add `__attribute__ ((unused))` rather than removing
+the parameter.
+
+```c
+static int gdb_handle_foo(struct connection *connection,
+                          const char *packet,
+                          int packet_size __attribute__ ((unused))) {
+```
+
+*Source: Change 7569 — Antonio Borneo: "Please add __attribute__ ((unused)) to 'packet_size'."*
+
+### CM-3a [WARNING] CI/build fix commit messages must cite the exact failure
+A commit that fixes a CI job, GitHub Actions workflow, or build warning must
+include in the body: what failed, where (log link or error text), and why
+the fix works. "Fixes error X" without context will receive a -1.
+
+*Source: Change 7551 — Antonio Borneo: "I have no idea what this patch is fixing. Can you explain more, maybe in the commit message? Can you report the complete error message."*
+
+### CM-9 [ERROR] Do not inadvertently revert submodule pointer
+Patches must not revert git submodule pointers as a side effect of rebase or
+merge. Antonio Borneo identifies submodule regressions immediately as a
+blocking -1, independent of whether the rest of the patch is correct.
+Check `git diff HEAD~1 -- jimtcl` before submitting.
+
+*Source: Changes 7524, 7551 — Antonio Borneo: "I put -1 because you are incorrectly reverting the jimtcl submodule to 0.81, while we have just updated it to 0.82."*
+
+### CM-3b [INFO] Note pre-existing doc/behaviour mismatches during rewrites
+When refactoring or rewriting a COMMAND_HANDLER without changing behaviour,
+check whether the command's documented behaviour matches its actual behaviour.
+If a mismatch exists and is not fixed in this patch, add a comment or TODO.
+
+*Source: Change 7554 — Tomas Vanek flagged that `jtag tapenable` returns an error when the tap is already in the desired state, contradicting the documentation.*
+
+### CS-11 [WARNING] Register cache has semantic importance for Cortex-A/AArch64
+The register cache is NOT merely a performance optimisation. On Cortex-A and
+AArch64, R0 (and R1 for wide data) are used as scratch registers when reading
+or writing other registers and memory. The cache preserves these values when
+they get dirtied by such operations. Any patch touching register flush,
+invalidate, or force-read must account for this and provide architecture-specific
+implementations for at least Cortex-A and AArch64.
+
+*Source: Change 8070 — Antonio Borneo: "Not true! On Cortex-A and AArch64 the register R0 is used to read/write either the other registers and the memory... the implementation of target_flush_all_regs_default() is broken for Cortex-A and AArch64 because it flushes R0 as first, but then flushing the other registers it causes R0 to become dirty!"*
+
+### ARCH-9 [WARNING] Document the API before implementing it
+For new public APIs in `src/target/register.h`, `target.c`, or other core
+target infrastructure, Borneo requests a documentation patch first:
+- Add doxygen comments to the relevant header
+- Fill in the appropriate section of `doc/manual/target.txt`
+
+Only after the API contract is documented and agreed should the implementation
+follow. This avoids implementing the wrong semantics.
+
+*Source: Change 8070 — Antonio Borneo: "What about starting with a first patch to clearly document the API we plan to introduce and their expected behavior? In src/target/register.h there is not a single doxygen comment."*
 
 ### ER-9 [INFO] Useless goto-to-return (non-blocking but noted)
 
@@ -822,11 +1118,27 @@ Loop iteration variables and item counts should use `unsigned` (or `unsigned int
 
 | Change | Subject | Area | Key Issues Found |
 |--------|---------|------|-----------------|
-| 8060 | flash/nor/fsl_flexspi: Support arbitrary flash cmd | flash/nor | Variable declaration placement (NM-8), CMD_ARGC ordering (CMD-7), int64_t for timeval_ms() (TY-8), unsigned for counts (TY-9), useless goto-to-return (ER-9) |
-| 8220 | flash/nor/mspm0: Add TI MSPM0xxxx support | flash/nor | Coordination with upstream vendor (ARCH-3) — eventually replaced by 8384 |
-| 7940 | breakpoints: Fix endless loop in bp/wp_clear_target | target | Initial approach rejected; required tmp-pointer pattern for list iteration |
-| 7600 | target/riscv: use ULL suffix for long constants in encoding.h | target/riscv | Auto-generated file must be fixed upstream (ARCH-1) |
+| 6615 | tcl/target/ti_k3: Add gdb-attach hook for m3/m4 | tcl/target | TCL-16 (halt 1000 required), TCL-17 (telnet users) — TI patch |
+| 7090 | tcl/target/ti_k3: Handle swd vs jtag | tcl/target | Manual `if/using_jtag/else` transport block rejected; must use `swj_newdap` (TCL-2a) |
 | 7200 | server/tcl_server.c: Fix logs override problem | server | TCL return vs LOG must stay separate (ARCH-2) |
-| 8450 | tcl/target/rp2350: workarounds for ROM API issues | tcl/target | Prior comment on ROM API workaround approach over multiple patchsets |
+| 7551 | github/workflow: increase delete-tag-and-release version | build | CM-9 (submodule revert), CM-3a (explain failure in commit msg) |
+| 7554 | jtag: rewrite jim_jtag_tap_enabler as COMMAND_HANDLER | jtag | CM-3b (note doc/behavior mismatch during rewrite) |
+| 7569 | src: fix clang15 compiler warnings | helper | TY-10 (`__attribute__((unused))` for kept-but-unused params) |
+| 7600 | target/riscv: use ULL suffix for long constants in encoding.h | target/riscv | Auto-generated file must be fixed upstream (ARCH-1) |
+| 7940 | breakpoints: Fix endless loop in bp/wp_clear_target | target | Initial approach rejected; required tmp-pointer pattern for list iteration |
+| 7950 | tcl/target/ti_k3: Add AM273 SoC | tcl/target | Clean merge — good reference for adding new SoC to existing multi-SoC cfg |
+| 8000 | flash/nor/stm32h7x: Remove redundant error messages | flash/nor | CMD-7: exact CMD_ARGC conditions required (Borneo ×3) |
+| 8060 | flash/nor/fsl_flexspi: Support arbitrary flash cmd | flash/nor | NM-8 (variable placement), CMD-7/8 (argc ordering), TY-8 (int64_t), TY-9 (unsigned), ER-9 |
+| 8070 | target: Fix force-reading of registers | target | CS-11 (register cache semantics), ARCH-9 (document API first) |
+| 8127 | helper/log: report target state in logs | helper | HP-7: verbosity rejected unanimously by all 3 maintainers |
+| 8130 | helper/options.c: Extend IS_DARWIN guard | helper | HP-6: use AC_CHECK_HEADERS + HAVE_* macro in configure.ac |
+| 8175 | tcl/board: Add Terasic DE1-SoC | tcl/board | CM-1a/b (subject format), TCL-10 (dead code), TCL-11 (defaults), TCL-12 (justify non-defaults), TCL-13 (arp_examine) |
+| 8181 | target/breakpoints: do not use ->number field | target | ARCH-5 (interim FIXME fix accepted), ARCH-6 (Borneo -1'd after Vanek +2) |
+| 8220 | flash/nor/mspm0: Add TI MSPM0xxxx support | flash/nor | ARCH-3: coordinate with upstream vendor before submitting |
+| 8232 | drivers/cmsis_dap: Fix buffer overflow | jtag/drivers | ARCH-6: Borneo -1 after Vanek +2 — independent review always valid |
+| 8450 | tcl/target/rp2350: workarounds for ROM API issues | tcl/target | Prior comment unresolved over multiple patchsets |
+| 6800 | Initial cut at support for LPC55S16 | tcl/target | CM-1a (subsystem prefix), WS-6 (SPDX in TCL), TCL-14 (adapter speed), TCL-15 (dead code), TCL-18 (naming), ARCH-7 (work area size) |
 
-*Gerrit harvest: 27 patches analysed from change range 7150–8420 (2026-05-12)*
+*Gerrit harvest: 27 general + 5 TI-authored + 31 maintainer-review patches analysed (2026-05-12)*
+*TI changeids registry: logs/ti-patches/changeids.md*
+*Maintainer review harvest: logs/maintainer-reviews/harvest-2026-05-12.md*
